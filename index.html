@@ -46,6 +46,55 @@
             font-size: 1.1em;
         }
         
+        .tracking-mode {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 10px;
+        }
+        
+        .tracking-mode label {
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .mode-switch {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .mode-option {
+            padding: 10px 20px;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: white;
+            color: #667eea;
+            font-weight: 600;
+        }
+        
+        .mode-option:hover {
+            background: #e8ebf9;
+        }
+        
+        .mode-option.active {
+            background: #667eea;
+            color: white;
+        }
+        
+        .mode-description {
+            font-size: 13px;
+            color: #666;
+            text-align: center;
+            margin-top: 8px;
+            font-style: italic;
+        }
+        
         .controls {
             display: flex;
             gap: 15px;
@@ -208,6 +257,21 @@
         <h1>💪 Adaptive AI Rep Counter</h1>
         <p class="subtitle">Automatically learns YOUR exercise movement</p>
         
+        <div class="tracking-mode">
+            <label>Tracking Mode:</label>
+            <div class="mode-switch">
+                <div class="mode-option active" data-mode="angle" id="angleMode">
+                    📐 Angle-Based
+                </div>
+                <div class="mode-option" data-mode="position" id="positionMode">
+                    📍 Position-Based
+                </div>
+            </div>
+        </div>
+        <div class="mode-description" id="modeDescription">
+            Best for exercises with joint rotation (squats, curls, push-ups)
+        </div>
+        
         <div class="controls">
             <button id="startBtn">Start Camera</button>
             <button id="calibrateBtn" disabled>Start Calibration</button>
@@ -229,11 +293,11 @@
                 <div class="stat-value" id="repCount">0</div>
             </div>
             <div class="stat-card">
-                <div class="stat-label">Primary Joint</div>
+                <div class="stat-label" id="primaryLabel">Primary Joint</div>
                 <div class="stat-value" id="primaryJoint" style="font-size: 20px;">--</div>
             </div>
             <div class="stat-card">
-                <div class="stat-label">Movement Range</div>
+                <div class="stat-label" id="rangeLabel">Movement Range</div>
                 <div class="stat-value" id="movementRange">--</div>
             </div>
             <div class="stat-card">
@@ -250,12 +314,14 @@
         <div class="instructions">
             <h3>Instructions:</h3>
             <ul>
-                <li><strong>Step 1:</strong> Click "Start Camera" and position yourself so your full body is visible</li>
-                <li><strong>Step 2:</strong> Click "Start Calibration" - you'll have 5 seconds to get ready</li>
-                <li><strong>Step 3:</strong> Perform your exercise continuously for 30 seconds at a moderate pace</li>
-                <li><strong>Step 4:</strong> The AI will analyze which joints move the most and learn your pattern</li>
-                <li><strong>Step 5:</strong> Click "Start Counting" to begin tracking your reps automatically!</li>
-                <li><strong>Note:</strong> This works for ANY exercise - squats, curls, jumping jacks, lunges, etc!</li>
+                <li><strong>Step 1:</strong> Select your tracking mode (Angle or Position)</li>
+                <li><strong>Step 2:</strong> Click "Start Camera" and position yourself so your full body is visible</li>
+                <li><strong>Step 3:</strong> Click "Start Calibration" - you'll have 5 seconds to get ready</li>
+                <li><strong>Step 4:</strong> Perform your exercise continuously for 30 seconds at a moderate pace</li>
+                <li><strong>Step 5:</strong> The AI will analyze movement patterns and learn your exercise</li>
+                <li><strong>Step 6:</strong> Click "Start Counting" to begin tracking your reps automatically!</li>
+                <li><strong>Angle Mode:</strong> Best for squats, curls, push-ups, shoulder presses (rotational movements)</li>
+                <li><strong>Position Mode:</strong> Best for jumping jacks, high knees, lateral raises, lunges (linear movements)</li>
             </ul>
         </div>
     </div>
@@ -267,14 +333,15 @@
         let isCalibrating = false;
         let isCounting = false;
         let repCount = 0;
+        let trackingMode = 'angle'; // 'angle' or 'position'
         
         // Calibration data
         let calibrationStartTime = 0;
         let jointMovementData = {};
         let primaryJointAngles = [];
         let primaryJoint = null;
-        let minAngle = Infinity;
-        let maxAngle = -Infinity;
+        let minValue = Infinity;
+        let maxValue = -Infinity;
         let isInDownPosition = false;
         
         const startBtn = document.getElementById('startBtn');
@@ -283,6 +350,9 @@
         const resetBtn = document.getElementById('resetBtn');
         const statusDiv = document.getElementById('status');
         const countdownDiv = document.getElementById('countdown');
+        const angleModeBtn = document.getElementById('angleMode');
+        const positionModeBtn = document.getElementById('positionMode');
+        const modeDescription = document.getElementById('modeDescription');
         
         // Define all possible joint angle combinations
         const jointCombinations = [
@@ -296,6 +366,13 @@
             { name: 'right_hip', points: ['right_shoulder', 'right_hip', 'right_knee'] }
         ];
         
+        // Define keypoints for position tracking
+        const keypointsForPosition = [
+            'left_wrist', 'right_wrist', 'left_elbow', 'right_elbow',
+            'left_shoulder', 'right_shoulder', 'left_hip', 'right_hip',
+            'left_knee', 'right_knee', 'left_ankle', 'right_ankle'
+        ];
+        
         async function init() {
             video = document.getElementById('video');
             canvas = document.getElementById('canvas');
@@ -305,6 +382,31 @@
             calibrateBtn.addEventListener('click', initiateCalibration);
             startCountingBtn.addEventListener('click', startCounting);
             resetBtn.addEventListener('click', reset);
+            
+            // Mode switching
+            angleModeBtn.addEventListener('click', () => switchMode('angle'));
+            positionModeBtn.addEventListener('click', () => switchMode('position'));
+        }
+        
+        function switchMode(mode) {
+            if (isCalibrating || isCounting) {
+                alert('Please reset before switching modes');
+                return;
+            }
+            
+            trackingMode = mode;
+            angleModeBtn.classList.toggle('active', mode === 'angle');
+            positionModeBtn.classList.toggle('active', mode === 'position');
+            
+            if (mode === 'angle') {
+                modeDescription.textContent = 'Best for exercises with joint rotation (squats, curls, push-ups)';
+                document.getElementById('primaryLabel').textContent = 'Primary Joint';
+                document.getElementById('rangeLabel').textContent = 'Movement Range';
+            } else {
+                modeDescription.textContent = 'Best for exercises with linear movement (jumping jacks, high knees, lunges)';
+                document.getElementById('primaryLabel').textContent = 'Primary Keypoint';
+                document.getElementById('rangeLabel').textContent = 'Movement Range';
+            }
         }
         
         async function startCamera() {
@@ -361,15 +463,21 @@
         
         function startCalibration() {
             jointMovementData = {};
-            jointCombinations.forEach(joint => {
-                jointMovementData[joint.name] = [];
-            });
+            
+            if (trackingMode === 'angle') {
+                jointCombinations.forEach(joint => {
+                    jointMovementData[joint.name] = [];
+                });
+            } else {
+                keypointsForPosition.forEach(kp => {
+                    jointMovementData[kp] = { x: [], y: [] };
+                });
+            }
             
             isCalibrating = true;
             calibrationStartTime = Date.now();
             updateStatus('Calibrating... Keep performing your exercise! (30 seconds)', 'warning');
             
-            // Show progress bar
             const progressContainer = document.createElement('div');
             progressContainer.className = 'progress-bar';
             progressContainer.innerHTML = '<div class="progress-fill" id="progressFill"></div>';
@@ -390,45 +498,103 @@
         }
         
         function finishCalibration() {
-            // Calculate range of motion for each joint
             let maxRange = 0;
             let bestJoint = null;
-            
             const jointRanges = {};
             
-            for (const joint in jointMovementData) {
-                const angles = jointMovementData[joint];
-                if (angles.length > 50) {
-                    const min = Math.min(...angles);
-                    const max = Math.max(...angles);
-                    const range = max - min;
-                    jointRanges[joint] = { min, max, range };
-                    
-                    if (range > maxRange) {
-                        maxRange = range;
-                        bestJoint = joint;
+            if (trackingMode === 'angle') {
+                // Angle-based analysis
+                for (const joint in jointMovementData) {
+                    const angles = jointMovementData[joint];
+                    if (angles.length > 50) {
+                        const min = Math.min(...angles);
+                        const max = Math.max(...angles);
+                        const range = max - min;
+                        jointRanges[joint] = { min, max, range };
+                        
+                        if (range > maxRange) {
+                            maxRange = range;
+                            bestJoint = joint;
+                        }
                     }
                 }
+                
+                if (bestJoint && maxRange > 15) {
+                    primaryJoint = bestJoint;
+                    minValue = jointRanges[bestJoint].min;
+                    maxValue = jointRanges[bestJoint].max;
+                    primaryJointAngles = jointMovementData[bestJoint];
+                    
+                    displayCalibrationResults(bestJoint, maxRange, jointRanges, '°');
+                } else {
+                    calibrateBtn.disabled = false;
+                    updateStatus('Calibration failed. Not enough movement detected. Make sure you\'re performing the exercise continuously.', 'warning');
+                }
+            } else {
+                // Position-based analysis
+                for (const kp in jointMovementData) {
+                    const xPositions = jointMovementData[kp].x;
+                    const yPositions = jointMovementData[kp].y;
+                    
+                    if (xPositions.length > 50) {
+                        const xMin = Math.min(...xPositions);
+                        const xMax = Math.max(...xPositions);
+                        const yMin = Math.min(...yPositions);
+                        const yMax = Math.max(...yPositions);
+                        
+                        const xRange = xMax - xMin;
+                        const yRange = yMax - yMin;
+                        const totalRange = Math.sqrt(xRange * xRange + yRange * yRange);
+                        
+                        jointRanges[kp] = { 
+                            xMin, xMax, yMin, yMax, 
+                            xRange, yRange, totalRange,
+                            axis: xRange > yRange ? 'x' : 'y',
+                            min: xRange > yRange ? xMin : yMin,
+                            max: xRange > yRange ? xMax : yMax
+                        };
+                        
+                        if (totalRange > maxRange) {
+                            maxRange = totalRange;
+                            bestJoint = kp;
+                        }
+                    }
+                }
+                
+                if (bestJoint && maxRange > 30) {
+                    primaryJoint = bestJoint;
+                    const primaryAxis = jointRanges[bestJoint].axis;
+                    minValue = jointRanges[bestJoint].min;
+                    maxValue = jointRanges[bestJoint].max;
+                    primaryJointAngles = jointMovementData[bestJoint][primaryAxis];
+                    
+                    displayCalibrationResults(bestJoint, Math.round(maxRange), jointRanges, 'px', primaryAxis);
+                } else {
+                    calibrateBtn.disabled = false;
+                    updateStatus('Calibration failed. Not enough movement detected. Try making larger movements.', 'warning');
+                }
+            }
+        }
+        
+        function displayCalibrationResults(bestJoint, range, jointRanges, unit, axis = null) {
+            startCountingBtn.disabled = false;
+            document.getElementById('primaryJoint').textContent = formatJointName(bestJoint);
+            
+            if (trackingMode === 'angle') {
+                document.getElementById('movementRange').textContent = Math.round(range) + unit;
+            } else {
+                document.getElementById('movementRange').textContent = Math.round(range) + unit + ' (' + axis.toUpperCase() + ')';
             }
             
-            if (bestJoint && maxRange > 15) {
-                primaryJoint = bestJoint;
-                minAngle = jointRanges[bestJoint].min;
-                maxAngle = jointRanges[bestJoint].max;
-                primaryJointAngles = jointMovementData[bestJoint];
+            const jointInfo = document.getElementById('jointInfo');
+            const jointDetails = document.getElementById('jointDetails');
+            jointInfo.style.display = 'block';
+            
+            let detailsHTML = '';
+            
+            if (trackingMode === 'angle') {
+                detailsHTML = `<p><strong>${formatJointName(bestJoint)}</strong>: ${Math.round(minValue)}° - ${Math.round(maxValue)}° (${Math.round(range)}° range)</p>`;
                 
-                startCountingBtn.disabled = false;
-                document.getElementById('primaryJoint').textContent = formatJointName(primaryJoint);
-                document.getElementById('movementRange').textContent = Math.round(maxRange) + '°';
-                
-                // Show joint info
-                const jointInfo = document.getElementById('jointInfo');
-                const jointDetails = document.getElementById('jointDetails');
-                jointInfo.style.display = 'block';
-                
-                let detailsHTML = `<p><strong>${formatJointName(primaryJoint)}</strong>: ${Math.round(minAngle)}° - ${Math.round(maxAngle)}° (${Math.round(maxRange)}° range)</p>`;
-                
-                // Show top 3 moving joints
                 const sortedJoints = Object.entries(jointRanges)
                     .sort((a, b) => b[1].range - a[1].range)
                     .slice(0, 3);
@@ -439,14 +605,25 @@
                         detailsHTML += `<p style="font-size: 12px;">${formatJointName(joint)}: ${Math.round(data.range)}° range</p>`;
                     }
                 });
-                
-                jointDetails.innerHTML = detailsHTML;
-                
-                updateStatus(`Calibration complete! Primary mover: ${formatJointName(primaryJoint)}. Click "Start Counting"`, 'success');
             } else {
-                calibrateBtn.disabled = false;
-                updateStatus('Calibration failed. Not enough movement detected. Make sure you\'re performing the exercise continuously.', 'warning');
+                detailsHTML = `<p><strong>${formatJointName(bestJoint)}</strong>: ${Math.round(range)}px movement (${axis.toUpperCase()}-axis)</p>`;
+                
+                const sortedJoints = Object.entries(jointRanges)
+                    .sort((a, b) => b[1].totalRange - a[1].totalRange)
+                    .slice(0, 3);
+                
+                detailsHTML += '<p style="margin-top: 10px; font-size: 12px;">Other moving keypoints:</p>';
+                sortedJoints.forEach(([joint, data], idx) => {
+                    if (idx > 0) {
+                        detailsHTML += `<p style="font-size: 12px;">${formatJointName(joint)}: ${Math.round(data.totalRange)}px (${data.axis.toUpperCase()})</p>`;
+                    }
+                });
             }
+            
+            jointDetails.innerHTML = detailsHTML;
+            
+            const modeText = trackingMode === 'angle' ? 'angle' : 'position';
+            updateStatus(`Calibration complete! Tracking ${formatJointName(bestJoint)} (${modeText}-based). Click "Start Counting"`, 'success');
         }
         
         function formatJointName(joint) {
@@ -466,24 +643,44 @@
                 drawSkeleton(pose.keypoints);
                 
                 if (isCalibrating) {
-                    // Calculate all joint angles during calibration
-                    jointCombinations.forEach(joint => {
-                        const angle = calculateAngle(pose.keypoints, joint.points);
-                        if (angle !== null) {
-                            jointMovementData[joint.name].push(angle);
-                        }
-                    });
+                    if (trackingMode === 'angle') {
+                        jointCombinations.forEach(joint => {
+                            const angle = calculateAngle(pose.keypoints, joint.points);
+                            if (angle !== null) {
+                                jointMovementData[joint.name].push(angle);
+                            }
+                        });
+                    } else {
+                        keypointsForPosition.forEach(kpName => {
+                            const kp = pose.keypoints.find(k => k.name === kpName);
+                            if (kp && kp.score > 0.3) {
+                                jointMovementData[kpName].x.push(kp.x);
+                                jointMovementData[kpName].y.push(kp.y);
+                            }
+                        });
+                    }
                 }
                 
                 if (isCounting && primaryJoint) {
-                    // Calculate only the primary joint angle
-                    const jointCombo = jointCombinations.find(j => j.name === primaryJoint);
-                    if (jointCombo) {
-                        const angle = calculateAngle(pose.keypoints, jointCombo.points);
-                        if (angle !== null) {
-                            document.getElementById('movementRange').textContent = Math.round(angle) + '°';
-                            countReps(angle);
+                    let currentValue = null;
+                    
+                    if (trackingMode === 'angle') {
+                        const jointCombo = jointCombinations.find(j => j.name === primaryJoint);
+                        if (jointCombo) {
+                            currentValue = calculateAngle(pose.keypoints, jointCombo.points);
                         }
+                    } else {
+                        const kp = pose.keypoints.find(k => k.name === primaryJoint);
+                        if (kp && kp.score > 0.3) {
+                            const primaryAxis = primaryJointAngles === jointMovementData[primaryJoint].x ? 'x' : 'y';
+                            currentValue = kp[primaryAxis];
+                        }
+                    }
+                    
+                    if (currentValue !== null) {
+                        const unit = trackingMode === 'angle' ? '°' : 'px';
+                        document.getElementById('movementRange').textContent = Math.round(currentValue) + unit;
+                        countReps(currentValue);
                     }
                 }
             }
@@ -519,15 +716,15 @@
             updateStatus('Counting reps! Keep going!', 'success');
         }
         
-        function countReps(angle) {
-            const threshold = (maxAngle - minAngle) * 0.25;
-            const downThreshold = minAngle + threshold;
-            const upThreshold = maxAngle - threshold;
+        function countReps(value) {
+            const threshold = (maxValue - minValue) * 0.25;
+            const downThreshold = minValue + threshold;
+            const upThreshold = maxValue - threshold;
             
-            if (!isInDownPosition && angle < downThreshold) {
+            if (!isInDownPosition && value < downThreshold) {
                 isInDownPosition = true;
                 document.getElementById('repStatus').textContent = 'Down';
-            } else if (isInDownPosition && angle > upThreshold) {
+            } else if (isInDownPosition && value > upThreshold) {
                 isInDownPosition = false;
                 repCount++;
                 document.getElementById('repCount').textContent = repCount;
@@ -544,7 +741,14 @@
                 if (kp.score > 0.3) {
                     ctx.beginPath();
                     ctx.arc(kp.x, kp.y, 5, 0, 2 * Math.PI);
-                    ctx.fillStyle = '#00ff00';
+                    
+                    // Highlight primary joint during counting
+                    if (isCounting && primaryJoint && kp.name === primaryJoint) {
+                        ctx.fillStyle = '#ff00ff';
+                        ctx.arc(kp.x, kp.y, 8, 0, 2 * Math.PI);
+                    } else {
+                        ctx.fillStyle = '#00ff00';
+                    }
                     ctx.fill();
                 }
             });
@@ -591,8 +795,8 @@
             jointMovementData = {};
             primaryJointAngles = [];
             primaryJoint = null;
-            minAngle = Infinity;
-            maxAngle = -Infinity;
+            minValue = Infinity;
+            maxValue = -Infinity;
             isInDownPosition = false;
             isCounting = false;
             isCalibrating = false;
